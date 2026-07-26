@@ -28,7 +28,12 @@ npm run dev
 - Incluye reglas corregidas para técnicos, asesores, lavado, control de calidad,
   OT, vehículos, estados, costos, horas, capacidad, cumplimiento y agrupaciones.
 - Detecta diferencias entre archivos y las muestra en vez de elegir un valor al
-  azar.
+  azar. Para indicadores de vehículos y tipos de trabajo utiliza
+  `Entregable_3_Dashboard_Indicadores` como fuente principal y presenta los
+  otros libros como control cruzado.
 - Cada respuesta con datos numéricos ofrece gráficas de barras, línea y circular.
 - La pregunta **¿Qué puedo preguntar?** muestra un catálogo de ejemplos basado
   en los campos disponibles.
+- Reconoce variantes como camioneta/camionetas/pickup, SUV, automóvil/sedán,
+  monovolumen/minivan y kilometrajes escritos como `20.000`, `20000` o
+  `20 mil km`.

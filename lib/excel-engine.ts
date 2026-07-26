@@ -24,6 +24,13 @@ export type Chat = {
 export const clean = (s: string) =>
   s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
+const normalizeForMatching = (s: string) =>
+  clean(s)
+    .replace(/\b(5|10|15|20|25|30|35|40|45|50|55)\s*mil\b/g, (_match, value: string) => `${value}000`)
+    .replace(/(\d)[.,](?=\d{3}\b)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+
 const words = (s: string) =>
   clean(s).split(/[^a-z0-9]+/).filter(word => word.length > 1);
 
@@ -93,7 +100,13 @@ const concepts = [
   },
   {
     key: "tipo vehiculo",
-    aliases: ["tipo de vehiculo", "tipo vehiculo", "clase de vehiculo", "categoria de vehiculo", "vehiculo", "vehiculos", "auto", "autos", "coche", "coches"],
+    aliases: [
+      "tipo de vehiculo", "tipo vehiculo", "clase de vehiculo", "categoria de vehiculo",
+      "vehiculo", "vehiculos", "auto", "autos", "coche", "coches", "carro", "carros",
+      "camioneta", "camionetas", "pickup", "pick up", "suv", "todoterreno",
+      "automovil", "automoviles", "sedan", "sedanes", "monovolumen",
+      "monovolumenes", "minivan", "minivanes",
+    ],
     columns: ["tipo vehiculo", "tipo de vehiculo"],
   },
   {
@@ -227,8 +240,8 @@ const operationAliases = {
   total: ["total", "suma", "sumatoria", "acumulado", "acumulada"],
   max: ["maximo", "maxima", "mayor", "mas", "mas alto", "mas alta", "top"],
   min: ["minimo", "minima", "menor", "menos", "mas bajo", "mas baja"],
-  list: ["muestra", "mostrar", "lista", "listar", "detalle", "detalla", "cuales", "quien", "quienes", "nombres", "registros"],
-  group: [" por ", " segun ", "distribucion", "desglose", "composicion", "agrupa", "agrupado"],
+  list: ["muestra", "mostrar", "lista", "listar", "detalle", "detalla", "cuales", "quien", "quienes", "nombres", "registros", "que tipos", "que modelos", "que estados"],
+  group: [" por ", " segun ", " cada ", "distribucion", "desglose", "composicion", "agrupa", "agrupado"],
   chart: ["grafica", "grafico", "diagrama", "visualiza", "visualizacion", "representa", "chart"],
 };
 
@@ -246,6 +259,44 @@ const stateAliases: Record<string, string[]> = {
   OK: ["sin conflicto", "correctas", "validas"],
   SOBRECARGA: ["sobrecarga", "sobrecargada", "sobrecargadas"],
 };
+
+const vehicleTypeRules = [
+  {
+    value: "Camioneta",
+    singular: "camioneta",
+    plural: "camionetas",
+    aliases: ["camioneta", "camionetas", "pickup", "pickups", "pick up", "pick ups", "pick-up", "pick-ups"],
+  },
+  {
+    value: "SUV",
+    singular: "SUV",
+    plural: "SUV",
+    aliases: ["suv", "suvs", "todoterreno", "todoterrenos"],
+  },
+  {
+    value: "Automóvil",
+    singular: "automóvil",
+    plural: "automóviles",
+    aliases: ["automovil", "automoviles", "sedan", "sedanes"],
+  },
+  {
+    value: "Monovolumen",
+    singular: "monovolumen",
+    plural: "monovolúmenes",
+    aliases: ["monovolumen", "monovolumenes", "minivan", "minivanes"],
+  },
+];
+
+function includesPhrase(question: string, phrase: string) {
+  const normalizedQuestion = ` ${clean(question).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ")} `;
+  const normalizedPhrase = clean(phrase).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  return normalizedPhrase.length > 0 && normalizedQuestion.includes(` ${normalizedPhrase} `);
+}
+
+function detectVehicleType(question: string) {
+  return vehicleTypeRules.find(rule =>
+    rule.aliases.some(alias => includesPhrase(question, alias)));
+}
 
 export function expandQuestion(question: string) {
   const base = ` ${clean(question)} `;
@@ -350,6 +401,13 @@ function sourceScore(question: string, source: SourceTable) {
       score += 4;
     }
   }
+  if (
+    query.includes("tipo vehiculo") &&
+    source.workbook.includes("Entregable 3") &&
+    clean(source.sheet) === "base_datos"
+  ) {
+    score += 30;
+  }
   return score > 0 ? score + sourcePriority(source) : 0;
 }
 
@@ -376,7 +434,7 @@ function bestColumn(question: string, sources: SourceTable[], numericOnly = fals
 type AppliedFilter = { column: string; value: string };
 
 function filtersFor(question: string, source: SourceTable): AppliedFilter[] {
-  const query = ` ${clean(question)} `;
+  const query = ` ${normalizeForMatching(question)} `;
   const queryStems = new Set(stems(query));
   const matches: { column: string; value: string; score: number }[] = [];
   for (const column of source.columns) {
@@ -386,7 +444,7 @@ function filtersFor(question: string, source: SourceTable): AppliedFilter[] {
         .filter(value => value && value.length < 90),
     )].slice(0, 500);
     for (const value of values) {
-      const normalizedValue = clean(value);
+      const normalizedValue = normalizeForMatching(value);
       const valueWords = words(normalizedValue);
       const valueStems = valueWords.map(stem);
       const numericLike = /^[$€£]?\s*-?\d[\d.,%/\s:-]*$/.test(value);
@@ -681,10 +739,311 @@ function definitionAnswer(question: string, sources: SourceTable[]) {
   return undefined;
 }
 
+function vehicleTypeCountAnswer(
+  question: string,
+  sources: SourceTable[],
+  wantsCount: boolean,
+) {
+  const vehicleType = detectVehicleType(question);
+  if (!wantsCount || !vehicleType) return undefined;
+
+  const candidates = sources
+    .map(source => {
+      const typeColumn = source.columns.find(column =>
+        ["tipo vehiculo", "tipo de vehiculo"].includes(clean(column)));
+      const idColumn = source.columns.find(column => clean(column) === "ot");
+      if (!typeColumn || !idColumn) return undefined;
+      const detectedFilters = filtersFor(question, source)
+        .filter(filter => clean(filter.column) !== "ot");
+      const extraFilters = detectedFilters
+        .filter(filter => clean(filter.column) !== clean(typeColumn));
+      const filteredRows = applyFilters(
+        source.rows.filter(row =>
+          clean(String(row[typeColumn] ?? "")) === clean(vehicleType.value)),
+        extraFilters,
+      );
+      return {
+        source,
+        typeColumn,
+        extraFilters,
+        count: new Set(
+          filteredRows
+            .map(row => String(row[idColumn] ?? "").trim())
+            .filter(Boolean),
+        ).size,
+      };
+    })
+    .filter((item): item is {
+      source: SourceTable;
+      typeColumn: string;
+      extraFilters: AppliedFilter[];
+      count: number;
+    } => Boolean(item));
+
+  if (!candidates.length) return undefined;
+
+  const principal = candidates.find(candidate =>
+    candidate.source.workbook.includes("Entregable 3") &&
+    clean(candidate.source.sheet) === "base_datos") ?? candidates[0];
+  const requiredExtraValues = principal.extraFilters.map(filter => clean(filter.value));
+  const comparable = candidates.filter(candidate =>
+    candidate === principal ||
+    requiredExtraValues.every(value =>
+      candidate.extraFilters.some(filter => clean(filter.value) === value)));
+  const ordered = [
+    principal,
+    ...comparable.filter(candidate => candidate !== principal),
+  ];
+  const different = ordered.some(candidate => candidate.count !== principal.count);
+  const extraText = principal.extraFilters.length
+    ? ` con ${principal.extraFilters.map(filter => `${filter.column} = “${filter.value}”`).join(" y ")}`
+    : "";
+  const comparisonText = different
+    ? ` En el control cruzado, ${ordered.slice(1).map(candidate =>
+      `${candidate.source.workbook} registra ${candidate.count}`).join("; ")}. Los archivos no coinciden en este indicador.`
+    : ordered.length > 1
+      ? ` Las ${ordered.length} fuentes detalladas coinciden.`
+      : "";
+  const vehicleWord = principal.count === 1 ? "vehículo" : "vehículos";
+  const registeredWord = principal.count === 1 ? "registrado" : "registrados";
+
+  return {
+    role: "assistant" as const,
+    text: `Hay ${principal.count} ${vehicleWord} de tipo ${vehicleType.singular}${extraText} ${registeredWord} en el taller, según el Dashboard de indicadores, que se usa como fuente principal para esta consulta.${comparisonText}`,
+    table: ordered.map(candidate => ({
+      Archivo: candidate.source.workbook,
+      Hoja: candidate.source.sheet,
+      "Tipo de vehículo": vehicleType.value,
+      Cantidad: candidate.count,
+      Uso: candidate === principal ? "Valor principal" : "Control cruzado",
+    })),
+    chart: ordered.map(candidate => ({
+      label: candidate === principal
+        ? `Dashboard: ${vehicleType.plural}`
+        : `${candidate.source.workbook.replace(/ · .*/, "")}: ${vehicleType.plural}`,
+      value: candidate.count,
+    })),
+    chartTitle: `${vehicleType.plural} registradas por fuente`,
+    sources: ordered.map(candidate => sourceLabel(candidate.source)),
+  };
+}
+
+function vehicleTypeListAnswer(
+  question: string,
+  sources: SourceTable[],
+  wantsList: boolean,
+) {
+  const q = clean(question);
+  const asksTypes = q.includes("tipo") || q.includes("categoria") || q.includes("clase");
+  const asksVehicles = ["vehiculo", "vehiculos", "carro", "carros", "auto", "autos"].some(term =>
+    q.includes(term));
+  if (!wantsList || !asksTypes || !asksVehicles || detectVehicleType(question)) return undefined;
+
+  const principal = sources.find(source =>
+    source.workbook.includes("Entregable 3") &&
+    clean(source.sheet) === "base_datos" &&
+    source.columns.some(column => ["tipo vehiculo", "tipo de vehiculo"].includes(clean(column))));
+  if (!principal) return undefined;
+  const typeColumn = principal.columns.find(column =>
+    ["tipo vehiculo", "tipo de vehiculo"].includes(clean(column)))!;
+  const idColumn = principal.columns.find(column => clean(column) === "ot");
+  const buckets = new Map<string, Set<string>>();
+  principal.rows.forEach((row, index) => {
+    const label = String(row[typeColumn] ?? "").trim();
+    if (!label) return;
+    if (!buckets.has(label)) buckets.set(label, new Set());
+    buckets.get(label)!.add(idColumn ? String(row[idColumn] ?? index) : String(index));
+  });
+  const data = [...buckets]
+    .map(([label, values]) => ({ label, value: values.size }))
+    .sort((a, b) => b.value - a.value);
+  return {
+    role: "assistant" as const,
+    text: `El Dashboard registra ${data.length} tipos de vehículos: ${data.map(item => `${item.label} (${item.value})`).join(", ")}.`,
+    table: data.map(item => ({
+      "Tipo de vehículo": item.label,
+      Cantidad: item.value,
+    })),
+    chart: data,
+    chartTitle: "Vehículos registrados por tipo",
+    sources: [sourceLabel(principal)],
+  };
+}
+
+function workTypeCountAnswer(
+  question: string,
+  sources: SourceTable[],
+  wantsCount: boolean,
+) {
+  if (!wantsCount) return undefined;
+  const principalSource = sources.find(source =>
+    source.workbook.includes("Entregable 3") &&
+    clean(source.sheet) === "base_datos");
+  if (!principalSource) return undefined;
+  const principalColumn = principalSource.columns.find(column =>
+    ["tipo trabajo", "tipo mantenimiento", "tipo de mantenimiento"].includes(clean(column)));
+  const principalId = principalSource.columns.find(column => clean(column) === "ot");
+  if (!principalColumn || !principalId) return undefined;
+  const principalWorkFilter = filtersFor(question, principalSource)
+    .find(filter => clean(filter.column) === clean(principalColumn));
+  if (!principalWorkFilter) return undefined;
+
+  const candidates = sources
+    .map(source => {
+      const workColumn = source.columns.find(column =>
+        ["tipo trabajo", "tipo mantenimiento", "tipo de mantenimiento"].includes(clean(column)));
+      const idColumn = source.columns.find(column => clean(column) === "ot");
+      if (!workColumn || !idColumn) return undefined;
+      const principalWork = normalizeForMatching(principalWorkFilter.value);
+      const principalMileage = principalWork.match(/\b\d{4,6}\b/)?.[0];
+      const matchingRows = source.rows.filter(row => {
+        const candidateWork = normalizeForMatching(String(row[workColumn] ?? ""));
+        return candidateWork === principalWork || Boolean(
+          principalMileage &&
+          candidateWork.includes("mantenimiento") &&
+          candidateWork.includes(principalMileage),
+        );
+      });
+      if (!matchingRows.length) return undefined;
+      const extraFilters = filtersFor(question, source)
+        .filter(filter =>
+          clean(filter.column) !== clean(workColumn) &&
+          clean(filter.column) !== "ot");
+      const filteredRows = applyFilters(matchingRows, extraFilters);
+      return {
+        source,
+        extraFilters,
+        count: new Set(
+          filteredRows.map(row => String(row[idColumn] ?? "").trim()).filter(Boolean),
+        ).size,
+      };
+    })
+    .filter((item): item is {
+      source: SourceTable;
+      extraFilters: AppliedFilter[];
+      count: number;
+    } => Boolean(item));
+  if (!candidates.length) return undefined;
+
+  const principal = candidates.find(candidate => candidate.source === principalSource) ?? candidates[0];
+  const ordered = [principal, ...candidates.filter(candidate => candidate !== principal)];
+  const different = ordered.some(candidate => candidate.count !== principal.count);
+  const extraText = principal.extraFilters.length
+    ? ` con ${principal.extraFilters.map(filter => `${filter.column} = “${filter.value}”`).join(" y ")}`
+    : "";
+  const comparisonText = different
+    ? ` En el control cruzado, ${ordered.slice(1).map(candidate =>
+      `${candidate.source.workbook} registra ${candidate.count}`).join("; ")}.`
+    : ordered.length > 1
+      ? ` Las ${ordered.length} fuentes detalladas coinciden.`
+      : "";
+  return {
+    role: "assistant" as const,
+    text: `Hay ${principal.count} órdenes de “${principalWorkFilter.value}”${extraText}, según el Dashboard de indicadores.${comparisonText}`,
+    table: ordered.map(candidate => ({
+      Archivo: candidate.source.workbook,
+      Hoja: candidate.source.sheet,
+      "Tipo de trabajo": principalWorkFilter.value,
+      Cantidad: candidate.count,
+      Uso: candidate === principal ? "Valor principal" : "Control cruzado",
+    })),
+    chart: ordered.map(candidate => ({
+      label: candidate === principal ? "Dashboard" : candidate.source.workbook.replace(/ · .*/, ""),
+      value: candidate.count,
+    })),
+    chartTitle: `Órdenes de ${principalWorkFilter.value}`,
+    sources: ordered.map(candidate => sourceLabel(candidate.source)),
+  };
+}
+
+function workTypeListAnswer(
+  question: string,
+  sources: SourceTable[],
+  wantsList: boolean,
+) {
+  const q = clean(question);
+  const asksTypes = q.includes("tipo") || q.includes("clase") || q.includes("categoria");
+  const asksWork = ["trabajo", "mantenimiento", "servicio"].some(term => q.includes(term));
+  if (!wantsList || !asksTypes || !asksWork) return undefined;
+  const principal = sources.find(source =>
+    source.workbook.includes("Entregable 3") &&
+    clean(source.sheet) === "base_datos");
+  if (!principal) return undefined;
+  const workColumn = principal.columns.find(column => clean(column) === "tipo trabajo");
+  const idColumn = principal.columns.find(column => clean(column) === "ot");
+  if (!workColumn) return undefined;
+  const buckets = new Map<string, Set<string>>();
+  principal.rows.forEach((row, index) => {
+    const label = String(row[workColumn] ?? "").trim();
+    if (!label) return;
+    if (!buckets.has(label)) buckets.set(label, new Set());
+    buckets.get(label)!.add(idColumn ? String(row[idColumn] ?? index) : String(index));
+  });
+  const data = [...buckets]
+    .map(([label, values]) => ({ label, value: values.size }))
+    .sort((a, b) => b.value - a.value);
+  return {
+    role: "assistant" as const,
+    text: `El Dashboard registra ${data.length} tipos de trabajo: ${data.map(item => `${item.label} (${item.value})`).join(", ")}.`,
+    table: data.map(item => ({ "Tipo de trabajo": item.label, Cantidad: item.value })),
+    chart: data,
+    chartTitle: "Órdenes por tipo de trabajo",
+    sources: [sourceLabel(principal)],
+  };
+}
+
+function conflictIndicatorAnswer(
+  question: string,
+  sources: SourceTable[],
+  wantsCount: boolean,
+) {
+  if (!wantsCount) return undefined;
+  const q = clean(question);
+  const rules = [
+    {
+      aliases: ["ordenes con horas extra", "ot con horas extra", "ordenes que requieren horas extra", "ordenes con sobretiempo"],
+      indicator: "Órdenes con horas extra",
+    },
+    {
+      aliases: ["conflictos de tecnico", "conflictos de tecnicos", "solapamientos de tecnico", "cruces de tecnico"],
+      indicator: "Conflictos de técnico",
+    },
+    {
+      aliases: ["entregas incumplidas", "ordenes incumplidas", "entregas fuera de plazo"],
+      indicator: "Entregas incumplidas",
+    },
+    {
+      aliases: ["ordenes validas", "ot validas", "ordenes sin conflicto"],
+      indicator: "Órdenes válidas",
+    },
+  ];
+  const rule = rules.find(candidate =>
+    candidate.aliases.some(alias => q.includes(clean(alias))));
+  if (!rule) return undefined;
+  const source = sources.find(candidate =>
+    clean(candidate.sheet) === "conflictos" &&
+    candidate.columns.some(column => clean(column) === "indicador") &&
+    candidate.columns.some(column => clean(column) === "cantidad"));
+  if (!source) return undefined;
+  const indicatorColumn = source.columns.find(column => clean(column) === "indicador")!;
+  const countColumn = source.columns.find(column => clean(column) === "cantidad")!;
+  const row = source.rows.find(candidate =>
+    clean(String(candidate[indicatorColumn] ?? "")) === clean(rule.indicator));
+  if (!row) return undefined;
+  const count = num(row[countColumn]);
+  if (!Number.isFinite(count)) return undefined;
+  return {
+    role: "assistant" as const,
+    text: `Hay ${fmt(count)} ${rule.indicator.toLowerCase()}, según el resumen de conflictos del planning.`,
+    table: [{ Indicador: rule.indicator, Cantidad: count }],
+    sources: [sourceLabel(source)],
+  };
+}
+
 function operationalCount(question: string, sources: SourceTable[], wantsCount: boolean) {
   const q = clean(question);
   const asksOrders = /\bot\b/.test(q) || q.includes("orden de trabajo") || q.includes("ordenes");
-  const asksVehicles = q.includes("vehiculo") || q.includes("autos") || q.includes("coches");
+  const asksVehicles = q.includes("vehiculo") || q.includes("autos") || q.includes("coches") || q.includes("carros");
   if (!wantsCount || (!asksOrders && !asksVehicles)) return undefined;
   const operational = sources.filter(source =>
     source.columns.some(column => clean(column) === "ot") &&
@@ -709,6 +1068,23 @@ function operationalCount(question: string, sources: SourceTable[], wantsCount: 
   comparable.forEach(item => item.filters.forEach(filter => allFilters.set(filter.column, filter.value)));
   const filters = [...allFilters].map(([column, value]) => ({ column, value }));
   if (counts.length > 1) {
+    const principal = comparable.find(item =>
+      item.source.workbook.includes("Entregable 3") &&
+      clean(item.source.sheet) === "base_datos");
+    if (principal) {
+      const ordered = [principal, ...comparable.filter(item => item !== principal)];
+      return {
+        role: "assistant" as const,
+        text: `Según el Dashboard de indicadores, hay ${principal.count} ${entity}${filterText(principal.filters)}. Las fuentes operativas presentan valores diferentes; se muestra el control cruzado.`,
+        table: ordered.map(item => ({
+          Archivo: item.source.workbook,
+          Hoja: item.source.sheet,
+          Cantidad: item.count,
+          Uso: item === principal ? "Valor principal" : "Control cruzado",
+        })),
+        sources: ordered.map(item => sourceLabel(item.source)),
+      };
+    }
     return {
       role: "assistant" as const,
       text: `Las fuentes no coinciden en la cantidad de ${entity}${filterText(filters)}. Muestro cada valor para evitar presentar una cifra dudosa.`,
@@ -796,8 +1172,23 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
   const definition = definitionAnswer(question, sources);
   if (definition) return definition;
 
+  const conflictIndicator = conflictIndicatorAnswer(question, sources, wantsCount);
+  if (conflictIndicator) return conflictIndicator;
+
   const personnel = personnelAnswer(question, sources, wantsCount, wantsList);
   if (personnel) return personnel;
+
+  const vehicleTypeCount = vehicleTypeCountAnswer(question, sources, wantsCount);
+  if (vehicleTypeCount && !wantsGroup) return vehicleTypeCount;
+
+  const vehicleTypeList = vehicleTypeListAnswer(question, sources, wantsList);
+  if (vehicleTypeList) return vehicleTypeList;
+
+  const workTypeCount = workTypeCountAnswer(question, sources, wantsCount);
+  if (workTypeCount && !wantsGroup) return workTypeCount;
+
+  const workTypeList = workTypeListAnswer(question, sources, wantsList);
+  if (workTypeList) return workTypeList;
 
   const directCount = operationalCount(question, sources, wantsCount);
   if (directCount && !wantsGroup) return directCount;
@@ -850,7 +1241,12 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
   );
   const source = [sourceLabel(targetSource)];
 
-  const defaultGroupedCount = group && (wantsCount || (wantsChart && (!target || asksOrders)) || ((wantsMax || wantsMin) && asksOrders));
+  const defaultGroupedCount = group && (
+    wantsCount ||
+    (wantsGroup && !target) ||
+    (wantsChart && (!target || asksOrders)) ||
+    ((wantsMax || wantsMin) && asksOrders)
+  );
   if (defaultGroupedCount) {
     const groupConcept = conceptForColumn(group)?.key;
     const comparableSources = sources
@@ -864,7 +1260,16 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
       .filter((candidate): candidate is { source: SourceTable; groupColumn: string } =>
         Boolean(candidate.groupColumn))
       .filter(candidate =>
-        ["base_datos", "ordenes_trabajo", "planning_diario", "planning_ia"].includes(clean(candidate.source.sheet)));
+        ["base_datos", "ordenes_trabajo", "planning_diario", "planning_ia"].includes(clean(candidate.source.sheet)))
+      .sort((a, b) => {
+        if (groupConcept !== "tipo vehiculo") return 0;
+        const aPrincipal = a.source.workbook.includes("Entregable 3") && clean(a.source.sheet) === "base_datos" ? 1 : 0;
+        const bPrincipal = b.source.workbook.includes("Entregable 3") && clean(b.source.sheet) === "base_datos" ? 1 : 0;
+        return bPrincipal - aPrincipal;
+      });
+    const expectedFilterValues = filters
+      .filter(filter => clean(filter.column) !== clean(group))
+      .map(filter => clean(filter.value));
     const distributions = comparableSources.map(candidate => {
       const idColumn = candidate.source.columns.find(column => clean(column) === "ot")!;
       const candidateFilters = filtersFor(question, candidate.source)
@@ -879,11 +1284,14 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
       });
       return {
         ...candidate,
+        candidateFilters,
         data: [...buckets]
           .map(([label, ids]) => ({ label, value: ids.size }))
           .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label)),
       };
-    });
+    }).filter(distribution =>
+      expectedFilterValues.every(value =>
+        distribution.candidateFilters.some(filter => clean(filter.value) === value)));
     const signatures = [...new Set(distributions.map(distribution =>
       JSON.stringify([...distribution.data].sort((a, b) => a.label.localeCompare(b.label)))))];
     if (distributions.length > 1 && signatures.length > 1 && !((wantsMax || wantsMin) && !wantsGroup)) {
@@ -894,6 +1302,43 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
           [group]: item.label,
           Cantidad: item.value,
         })));
+      const principalDistribution = distributions.find(distribution =>
+        distribution.source.workbook.includes("Entregable 3") &&
+        clean(distribution.source.sheet) === "base_datos") ?? distributions[0];
+      if (groupConcept === "tipo vehiculo" && principalDistribution) {
+        return {
+          role: "assistant",
+          text: `Según el Dashboard de indicadores, la distribución principal es: ${principalDistribution.data.map(item => `${item.label} (${item.value})`).join(", ")}. El otro archivo detallado presenta valores diferentes; el desglose completo se muestra como control cruzado.`,
+          table,
+          chart: principalDistribution.data,
+          chartTitle: "Distribución principal de vehículos por tipo",
+          autoChart: wantsChart,
+          sources: distributions.map(distribution => sourceLabel(distribution.source)),
+        };
+      }
+      const requestedVehicleType = detectVehicleType(question);
+      if (requestedVehicleType && principalDistribution) {
+        const orderedDistributions = [
+          principalDistribution,
+          ...distributions.filter(distribution => distribution !== principalDistribution),
+        ];
+        const principalFirstTable = orderedDistributions.flatMap(distribution =>
+          distribution.data.map(item => ({
+            Archivo: distribution.source.workbook,
+            Hoja: distribution.source.sheet,
+            [group]: item.label,
+            Cantidad: item.value,
+          })));
+        return {
+          role: "assistant",
+          text: `Según el Dashboard de indicadores, los vehículos de tipo ${requestedVehicleType.singular} se distribuyen por ${group} así: ${principalDistribution.data.map(item => `${item.label} (${item.value})`).join(", ")}. La otra fuente detallada presenta valores diferentes y se incluye como control cruzado.`,
+          table: principalFirstTable,
+          chart: principalDistribution.data,
+          chartTitle: `${requestedVehicleType.plural} por ${group}`,
+          autoChart: wantsChart,
+          sources: orderedDistributions.map(distribution => sourceLabel(distribution.source)),
+        };
+      }
       return {
         role: "assistant",
         text: `Las fuentes no coinciden en la distribución de órdenes por ${group}. Muestro el desglose de cada libro para que la diferencia sea visible y no presentar una sola cifra como definitiva.`,
@@ -1144,6 +1589,7 @@ export function attachChart(reply: Chat, question: string): Chat {
 export const suggestedQuestions = [
   "¿Cuántas órdenes de trabajo hay?",
   "¿Cuántos técnicos tiene el taller?",
+  "¿Cuántas camionetas están registradas?",
   "¿Cuántos lavadores hay?",
   "Gráfica de órdenes por estado",
   "Promedio de horas productivas por técnico",

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node scripts/test-data.mjs"
+    "test": "node scripts/test-data.mjs && node scripts/test-queries.mjs",
+    "test:queries": "node scripts/test-queries.mjs"
   },
   "dependencies": {
     "next": "15.5.9",
