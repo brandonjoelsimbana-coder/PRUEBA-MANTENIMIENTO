@@ -43,6 +43,8 @@ try {
     ["¿Cuántas camionetas están paradas?", "Hay 1 vehículo de tipo camioneta"],
     ["¿Qué tipos de vehículos hay?", "4 tipos de vehículos"],
     ["Camionetas por estado", "camioneta se distribuyen por Estado"],
+    ["¿Cuál es el número total de órdenes?", "tiene 230 órdenes de trabajo"],
+    ["¿Cuántas órdenes están Planificada?", "73 órdenes de trabajo"],
     ["¿Cuántas órdenes de mantenimiento de 20 mil km hay?", "Hay 42 órdenes"],
     ["¿Qué tipos de mantenimiento hay?", "6 tipos de trabajo"],
     ["¿Cuántas órdenes con horas extra hay?", "Hay 46 órdenes con horas extra"],
@@ -51,6 +53,14 @@ try {
     ["¿Cuántos técnicos tiene el taller?", "Hay 6 técnicos"],
     ["¿Cuántos lavadores hay?", "Hay 1 lavador"],
     ["¿Cuántas personas de control de calidad hay?", "Hay 1 persona"],
+    ["¿Cuántas horas trabajó al mes cada técnico en el taller?", "Marie Dubois: 133,4 h"],
+    ["Horas laboradas por técnico", "Willem Janssens: 131,22 h"],
+    ["Total de horas extra por técnico", "Pierre Dubois: 20,07 h"],
+    ["Total de horas normales por técnico", "Sophie Janssens: 100,53 h"],
+    ["Total de horas requeridas por técnico", "Willem Janssens: 117,37 h"],
+    ["¿Qué técnico trabajó más horas?", "Jan Peeters tiene el mayor acumulado de Horas productivas: 136,11"],
+    ["¿Qué técnico trabajó menos horas?", "Sophie Janssens tiene el menor acumulado de Horas productivas: 123,94"],
+    ["Total de costo control de calidad por estado", "total de Costo control calidad por Estado"],
     ["¿Cuántas órdenes están detenidas?", "4 órdenes"],
     ["¿Cuántas grúas hay?", "No encontré"],
   ];
@@ -66,8 +76,28 @@ try {
       console.error(`FALLO: ${question}\n${answer.text}`);
     }
   }
+  const monthly = engine.answerAcross(
+    "¿Cuántas horas trabajó al mes cada técnico en el taller?",
+    sources,
+  );
+  if (
+    !monthly.text.includes("no cubren el mes completo") ||
+    monthly.table?.length !== 6
+  ) {
+    failures += 1;
+    console.error("FALLO: la respuesta mensual debe aclarar el período parcial y listar 6 técnicos.");
+  }
+  const catalog = engine.buildQuestionCatalog(sources);
+  const catalogCount = catalog.reduce(
+    (total, category) => total + category.questions.length,
+    0,
+  );
+  if (catalog.length < 10 || catalogCount < 250) {
+    failures += 1;
+    console.error(`FALLO: catálogo insuficiente (${catalog.length} temas, ${catalogCount} preguntas).`);
+  }
   if (failures) process.exitCode = 1;
-  else console.log(`OK: ${cases.length} preguntas verificadas en ${sources.length} hojas.`);
+  else console.log(`OK: ${cases.length} preguntas verificadas y ${catalogCount} variantes en ${sources.length} hojas.`);
 } finally {
   fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 }

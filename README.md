@@ -32,8 +32,24 @@ npm run dev
   `Entregable_3_Dashboard_Indicadores` como fuente principal y presenta los
   otros libros como control cruzado.
 - Cada respuesta con datos numéricos ofrece gráficas de barras, línea y circular.
-- La pregunta **¿Qué puedo preguntar?** muestra un catálogo de ejemplos basado
-  en los campos disponibles.
+- Incluye un explorador con **474 preguntas y variantes** generadas desde los
+  estados, técnicos, asesores, bahías, tipos de vehículo, mantenimientos y
+  definiciones reales de los cuatro Excel. Todas son clicables y se pueden
+  filtrar por texto.
+- La pregunta **¿Qué puedo preguntar?** resume el catálogo por tema.
+- Interpreta “cuántas horas trabajó cada técnico” como suma de horas, no como
+  conteo de registros. Si se pregunta por el mes, aclara que los archivos
+  disponibles cubren del 13 al 27 de julio de 2026.
 - Reconoce variantes como camioneta/camionetas/pickup, SUV, automóvil/sedán,
   monovolumen/minivan y kilometrajes escritos como `20.000`, `20000` o
   `20 mil km`.
+
+## Verificación
+
+```bash
+npm test
+npm run build
+```
+
+Las pruebas validan los cuatro archivos, las 17 hojas, las consultas críticas
+de personal, vehículos, órdenes y horas, además del tamaño del catálogo.

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   answerAcross,
   attachChart,
+  buildQuestionCatalog,
   ChartKind,
   ChartPoint,
   Chat,
@@ -137,6 +138,8 @@ export default function Home() {
   }]);
   const [loading, setLoading] = useState(true);
   const [drag, setDrag] = useState(false);
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState("");
   const [visibleCharts, setVisibleCharts] = useState<Record<number, boolean>>({});
   const [chartKinds, setChartKinds] = useState<Record<number, ChartKind>>({});
   const inputRef = useRef<HTMLInputElement>(null);
@@ -144,6 +147,30 @@ export default function Home() {
     () => sources.reduce((total, source) => total + source.rows.length, 0),
     [sources],
   );
+  const questionCatalog = useMemo(() => buildQuestionCatalog(sources), [sources]);
+  const questionCount = useMemo(
+    () => questionCatalog.reduce((total, category) => total + category.questions.length, 0),
+    [questionCatalog],
+  );
+  const filteredCatalog = useMemo(() => {
+    const search = catalogSearch
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+    if (!search) return questionCatalog;
+    return questionCatalog
+      .map(category => ({
+        ...category,
+        questions: category.questions.filter(item =>
+          `${category.title} ${item}`
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .includes(search)),
+      }))
+      .filter(category => category.questions.length);
+  }, [catalogSearch, questionCatalog]);
 
   async function loadAll() {
     setLoading(true);
@@ -191,6 +218,7 @@ export default function Home() {
     const reply = attachChart(answerAcross(value, sources), value);
     setChat(current => [...current, user, reply]);
     setQuestion("");
+    setShowCatalog(false);
   }
 
   useEffect(() => {
@@ -279,12 +307,63 @@ export default function Home() {
             </div>
             <small>Busca e interpreta todos los archivos automáticamente</small>
           </div>
-          <div className="suggestionStrip" aria-label="Preguntas sugeridas">
-            {suggestedQuestions.slice(0, 6).map(example => (
-              <button key={example} onClick={() => ask(example)} disabled={loading}>
-                {example}
+          <div className="questionTools">
+            <div className="suggestionStrip" aria-label="Preguntas sugeridas">
+              {suggestedQuestions.slice(0, 6).map(example => (
+                <button key={example} onClick={() => ask(example)} disabled={loading}>
+                  {example}
+                </button>
+              ))}
+              <button
+                className="catalogOpen"
+                onClick={() => setShowCatalog(current => !current)}
+                disabled={loading}
+                aria-expanded={showCatalog}
+              >
+                {showCatalog ? "Cerrar preguntas" : `Ver todas (${questionCount})`}
               </button>
-            ))}
+            </div>
+            {showCatalog && (
+              <section className="questionCatalog" aria-label="Catálogo de preguntas">
+                <div className="catalogHead">
+                  <div>
+                    <strong>Preguntas preparadas desde los Excel</strong>
+                    <small>{questionCount} consultas y variantes en {questionCatalog.length} temas</small>
+                  </div>
+                  <button onClick={() => setShowCatalog(false)} aria-label="Cerrar catálogo">×</button>
+                </div>
+                <input
+                  className="catalogSearch"
+                  value={catalogSearch}
+                  onChange={event => setCatalogSearch(event.target.value)}
+                  placeholder="Buscar: horas, camionetas, costos, técnico…"
+                  autoFocus
+                />
+                <div className="catalogContent">
+                  {filteredCatalog.map(category => (
+                    <details key={category.title} open={Boolean(catalogSearch)}>
+                      <summary>
+                        <span>{category.title}</span>
+                        <b>{category.questions.length}</b>
+                      </summary>
+                      <p>{category.description}</p>
+                      <div className="catalogQuestions">
+                        {category.questions.map(example => (
+                          <button key={example} onClick={() => ask(example)}>
+                            {example}
+                          </button>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                  {!filteredCatalog.length && (
+                    <p className="catalogEmpty">
+                      No hay una pregunta predefinida con ese texto. Puedes escribirla directamente en el chat.
+                    </p>
+                  )}
+                </div>
+              </section>
+            )}
           </div>
           <div className="messages">
             {chat.map((message, index) => {

@@ -126,7 +126,15 @@ const concepts = [
   },
   {
     key: "horas productivas",
-    aliases: ["horas productivas", "hora productiva", "tiempo productivo", "productividad"],
+    aliases: [
+      "horas productivas", "hora productiva", "tiempo productivo", "productividad",
+      "horas trabajadas", "horas trabajada", "horas trabajo", "horas que trabajo",
+      "horas laboradas", "tiempo trabajado", "tiempo laborado", "carga horaria",
+      "horas mensuales", "horas al mes",
+      "trabajo mas horas", "trabajo menos horas", "mas horas trabajadas",
+      "menos horas trabajadas", "tecnico que mas trabajo", "tecnico que menos trabajo",
+      "quien trabajo mas", "quien trabajo menos",
+    ],
     columns: ["horas productivas"],
   },
   {
@@ -166,7 +174,10 @@ const concepts = [
   },
   {
     key: "costo control calidad",
-    aliases: ["costo control calidad", "costo de control de calidad", "costo calidad", "costo cc"],
+    aliases: [
+      "costo control calidad", "costo control de calidad",
+      "costo de control de calidad", "costo calidad", "costo cc",
+    ],
     columns: ["costo control calidad", "costo cc"],
   },
   {
@@ -235,9 +246,13 @@ const intentWords = new Set([
 ]);
 
 const operationAliases = {
-  count: ["cuanto", "cuantos", "cuanta", "cuantas", "cantidad", "numero de", "conteo", "cuenta", "existen", "hay", "tiene el taller"],
+  count: [
+    "cuanto", "cuantos", "cuanta", "cuantas", "cantidad", "numero de",
+    "numero total de", "total de ordenes", "total de ot", "conteo", "cuenta",
+    "existen", "hay", "tiene el taller",
+  ],
   average: ["promedio", "media", "valor medio", "media aritmetica"],
-  total: ["total", "suma", "sumatoria", "acumulado", "acumulada"],
+  total: ["total", "suma", "sumatoria", "acumulado", "acumulada", "al mes", "mensual", "mensuales", "durante el mes", "en el mes"],
   max: ["maximo", "maxima", "mayor", "mas", "mas alto", "mas alta", "top"],
   min: ["minimo", "minima", "menor", "menos", "mas bajo", "mas baja"],
   list: ["muestra", "mostrar", "lista", "listar", "detalle", "detalla", "cuales", "quien", "quienes", "nombres", "registros", "que tipos", "que modelos", "que estados"],
@@ -307,7 +322,7 @@ export function expandQuestion(question: string) {
     }
   }
   Object.entries(operationAliases).forEach(([operation, aliases]) => {
-    if (aliases.some(alias => base.includes(clean(alias)))) additions.add(operation);
+    if (aliases.some(alias => includesPhrase(base, alias))) additions.add(operation);
   });
   return `${base.trim()} ${[...additions].join(" ")}`.trim();
 }
@@ -493,8 +508,7 @@ function filterText(filters: AppliedFilter[]) {
 }
 
 function operationRequested(query: string, operation: keyof typeof operationAliases) {
-  const normalized = ` ${clean(query)} `;
-  return operationAliases[operation].some(alias => normalized.includes(clean(alias)));
+  return operationAliases[operation].some(alias => includesPhrase(query, alias));
 }
 
 function wantsHelp(query: string) {
@@ -505,89 +519,356 @@ function wantsHelp(query: string) {
   ].some(phrase => q.includes(phrase));
 }
 
-function helpCatalog(sources: SourceTable[]): Row[] {
-  const columns = new Set(sources.flatMap(source => source.columns.map(clean)));
-  const groups: { topic: string; required: string[]; examples: string[] }[] = [
+export type QuestionCategory = {
+  title: string;
+  description: string;
+  questions: string[];
+};
+
+function uniqueQuestions(questions: string[]) {
+  const seen = new Set<string>();
+  return questions.filter(question => {
+    const normalized = clean(question);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function valuesFrom(
+  source: SourceTable | undefined,
+  columnNames: string[],
+  limit = 40,
+) {
+  if (!source) return [];
+  const column = source.columns.find(candidate =>
+    columnNames.some(name => clean(candidate) === clean(name)));
+  if (!column) return [];
+  return [...new Set(
+    source.rows
+      .map(row => String(row[column] ?? "").trim())
+      .filter(value => value && value.length < 80),
+  )].slice(0, limit);
+}
+
+export function buildQuestionCatalog(sources: SourceTable[]): QuestionCategory[] {
+  const dashboard = sources.find(source =>
+    source.workbook.includes("Entregable 3") &&
+    clean(source.sheet) === "base_datos");
+  const personnel = sources.find(source => clean(source.sheet) === "personal");
+  const dictionary = sources.find(source => clean(source.sheet) === "diccionario");
+  const planning = sources.find(source =>
+    source.workbook.includes("Entregable 2") &&
+    clean(source.sheet) === "planning_diario");
+  const capacity = sources.find(source => clean(source.sheet) === "capacidad_taller");
+
+  const states = valuesFrom(dashboard, ["Estado"]);
+  const vehicleTypes = valuesFrom(dashboard, ["Tipo vehículo", "Tipo de vehículo"]);
+  const workTypes = valuesFrom(dashboard, ["Tipo trabajo", "Tipo mantenimiento"]);
+  const situations = valuesFrom(dashboard, ["Situación"]);
+  const compliance = valuesFrom(dashboard, ["Cumplimiento"]);
+  const technicians = valuesFrom(dashboard, ["Técnico"]);
+  const advisors = valuesFrom(dashboard, ["Asesor"]);
+  const bays = valuesFrom(planning, ["Bahía"]);
+  const weeks = valuesFrom(dashboard, ["Semana"]);
+  const fields = valuesFrom(dictionary, ["Campo"]);
+
+  const categories: QuestionCategory[] = [
     {
-      topic: "Órdenes y estados",
-      required: ["ot", "estado"],
-      examples: [
-        "¿Cuántas órdenes de trabajo hay?",
-        "¿Cuántas OT están paradas?",
+      title: "Órdenes de trabajo y estados",
+      description: "Conteos, listados, estados y distribuciones de las OT.",
+      questions: [
+        "¿Cuántas órdenes de trabajo hay en el taller?",
+        "¿Cuántas OT hay registradas?",
+        "¿Cuál es el número total de órdenes?",
+        "Cantidad de órdenes de trabajo",
+        "Lista las órdenes de trabajo",
+        "¿Qué estados de órdenes existen?",
+        "Distribución de órdenes por estado",
         "Gráfica de órdenes por estado",
+        "¿Qué estado tiene más órdenes?",
+        "¿Qué estado tiene menos órdenes?",
+        "Órdenes por técnico",
+        "Órdenes por asesor",
+        "Órdenes por fecha",
+        "Órdenes por semana",
+        "Órdenes por bahía",
+        "Órdenes por tipo de vehículo",
+        "Órdenes por tipo de trabajo",
+        ...states.flatMap(state => [
+          `¿Cuántas órdenes están ${state}?`,
+          `¿Cuántas OT tienen estado ${state}?`,
+          `Número de órdenes ${state}`,
+          `Lista las órdenes ${state}`,
+          `Órdenes ${state} por técnico`,
+          `Gráfica de órdenes ${state} por tipo de vehículo`,
+        ]),
       ],
     },
     {
-      topic: "Personal",
-      required: ["nombre", "cargo"],
-      examples: [
-        "¿Cuántos técnicos, asesores, lavadores y personas de control de calidad hay?",
+      title: "Personal del taller",
+      description: "Técnicos, asesores, lavado, control de calidad y personal completo.",
+      questions: [
+        "¿Cuántas personas trabajan en el taller?",
+        "Lista todo el personal del taller",
+        "Personal por cargo",
+        "Gráfica del personal por cargo",
+        "¿Cuántos técnicos tiene el taller?",
+        "¿Cuántos mecánicos hay?",
+        "Número de técnicos mecánicos",
         "¿Quiénes son los técnicos?",
-        "Lista todo el personal por cargo",
+        "Lista los mecánicos del taller",
+        "¿Cuántos asesores de servicio hay?",
+        "Número de recepcionistas",
+        "¿Quiénes son los asesores?",
+        "¿Cuántos lavadores hay?",
+        "¿Cuánto personal de lavado existe?",
+        "¿Quién es el lavador?",
+        "¿Cuántas personas de control de calidad hay?",
+        "Número de inspectores de calidad",
+        "¿Quién está encargado del control de calidad?",
+        ...technicians.flatMap(technician => [
+          `¿Cuántas horas trabajó ${technician}?`,
+          `Total de horas productivas de ${technician}`,
+          `Total de horas extra de ${technician}`,
+          `Costo técnico total de ${technician}`,
+          `¿Cuántas órdenes tiene ${technician}?`,
+          `Lista las órdenes de ${technician}`,
+        ]),
+        ...advisors.flatMap(advisor => [
+          `¿Cuántas órdenes tiene el asesor ${advisor}?`,
+          `Lista las órdenes de ${advisor}`,
+          `Costo de asesor total de ${advisor}`,
+        ]),
       ],
     },
     {
-      topic: "Vehículos y servicios",
-      required: ["tipo vehiculo"],
-      examples: [
-        "¿Cuántos vehículos hay por tipo?",
-        "¿Qué modelos están registrados?",
+      title: "Vehículos",
+      description: "Tipos de vehículo, modelos registrados y cruces con estados o servicios.",
+      questions: [
+        "¿Cuántos vehículos están registrados en el taller?",
+        "¿Qué tipos de vehículos hay?",
+        "Lista los tipos de vehículos registrados",
+        "Distribución de vehículos por tipo",
+        "Gráfica de vehículos por tipo",
+        "¿Qué tipo de vehículo tiene más órdenes?",
+        "¿Qué tipo de vehículo tiene menos órdenes?",
+        "Vehículos por estado",
+        "Vehículos por tipo de trabajo",
+        ...vehicleTypes.flatMap(type => [
+          `¿Cuántos vehículos de tipo ${type} están registrados en el taller?`,
+          `¿Cuántos ${type} hay?`,
+          `Número de vehículos ${type}`,
+          `Lista los vehículos de tipo ${type}`,
+          `${type} por estado`,
+          `Gráfica de ${type} por tipo de trabajo`,
+          `Costo total de vehículos ${type}`,
+          `Promedio de horas productivas de vehículos ${type}`,
+        ]),
+      ],
+    },
+    {
+      title: "Mantenimientos y servicios",
+      description: "Tipos de trabajo y mantenimientos por kilometraje.",
+      questions: [
+        "¿Qué tipos de mantenimiento hay?",
+        "Lista los tipos de trabajo",
+        "Distribución de órdenes por tipo de trabajo",
         "Gráfica de mantenimientos por tipo de trabajo",
+        "¿Qué mantenimiento tiene más órdenes?",
+        "¿Qué mantenimiento tiene menos órdenes?",
+        "Costo total por tipo de trabajo",
+        "Promedio de horas productivas por tipo de trabajo",
+        "Total de horas extra por tipo de trabajo",
+        ...workTypes.flatMap(workType => {
+          const mileage = normalizeForMatching(workType).match(/\b\d{4,6}\b/)?.[0];
+          const shortMileage = mileage ? `${Number(mileage) / 1000} mil km` : workType;
+          return [
+            `¿Cuántas órdenes de ${workType} hay?`,
+            `¿Cuántos mantenimientos de ${shortMileage} existen?`,
+            `Número de OT para ${workType}`,
+            `Lista las órdenes de ${workType}`,
+            `${workType} por estado`,
+            `${workType} por técnico`,
+            `Costo total de ${workType}`,
+            `Promedio de horas productivas de ${workType}`,
+            `Gráfica de ${workType} por tipo de vehículo`,
+          ];
+        }),
       ],
     },
     {
-      topic: "Horas y productividad",
-      required: ["horas productivas"],
-      examples: [
+      title: "Horas y productividad",
+      description: "Horas productivas, requeridas, normales y extra, con totales y promedios.",
+      questions: [
+        "¿Cuántas horas trabajó al mes cada técnico en el taller?",
+        "¿Cuántas horas trabajó cada técnico?",
+        "Horas laboradas por técnico",
+        "Total de horas productivas por técnico",
         "Promedio de horas productivas por técnico",
+        "Gráfica de horas productivas por técnico",
+        "¿Qué técnico trabajó más horas?",
+        "¿Qué técnico trabajó menos horas?",
+        "¿Quién acumula más horas productivas?",
+        "¿Quién acumula menos horas productivas?",
+        "Total de horas productivas del taller",
+        "Promedio de horas productivas",
+        "Total de horas productivas por fecha",
+        "Total de horas productivas por semana",
+        "Total de horas productivas por estado",
+        "Total de horas productivas por tipo de vehículo",
+        "Total de horas productivas por tipo de trabajo",
+        "Horas extra acumuladas por técnico",
+        "Total de horas extra por técnico",
+        "Promedio de horas extra por técnico",
         "Total de horas extra por fecha",
-        "¿Qué técnico acumula más horas productivas?",
+        "Total de horas extra por semana",
+        "Gráfica de horas extra por técnico",
+        "Horas normales acumuladas por técnico",
+        "Total de horas normales por técnico",
+        "Promedio de horas normales por técnico",
+        "Horas requeridas acumuladas por técnico",
+        "Total de horas requeridas por técnico",
+        "Promedio de horas requeridas por técnico",
+        "Promedio del tempario por tipo de trabajo",
+        "Máximo del tempario por tipo de vehículo",
+        "Mínimo del tempario por tipo de trabajo",
+        ...weeks.flatMap(week => [
+          `Total de horas productivas de la semana ${week}`,
+          `Horas productivas por técnico en la semana ${week}`,
+          `Total de horas extra de la semana ${week}`,
+        ]),
       ],
     },
     {
-      topic: "Costos",
-      required: ["costo total"],
-      examples: [
-        "¿Cuál es el costo total de todas las OT?",
-        "Costo promedio por tipo de vehículo",
-        "Gráfica del costo técnico por técnico",
+      title: "Costos, precios y ganancia",
+      description: "Cálculos económicos por técnico, vehículo, trabajo, fecha o estado.",
+      questions: [
+        ...[
+          "costo técnico", "costo asesor", "costo lavado",
+          "costo control de calidad", "costo total", "precio estimado",
+          "ganancia estimada",
+        ].flatMap(metric => [
+          `Total de ${metric}`,
+          `Promedio de ${metric}`,
+          `Máximo de ${metric}`,
+          `Mínimo de ${metric}`,
+          `Total de ${metric} por técnico`,
+          `Total de ${metric} por fecha`,
+          `Total de ${metric} por semana`,
+          `Total de ${metric} por estado`,
+          `Total de ${metric} por tipo de vehículo`,
+          `Total de ${metric} por tipo de trabajo`,
+          `Gráfica de ${metric} por técnico`,
+          `Gráfica de ${metric} por tipo de vehículo`,
+        ]),
+        "¿Qué técnico acumula mayor costo técnico?",
+        "¿Qué tipo de vehículo tiene mayor costo total?",
+        "¿Qué tipo de trabajo genera mayor ganancia estimada?",
       ],
     },
     {
-      topic: "Capacidad",
-      required: ["utilizacion"],
-      examples: [
-        "Promedio de utilización del taller",
+      title: "Capacidad y carga del taller",
+      description: "Capacidad normal, programable, total, disponibilidad, carga y utilización.",
+      questions: [
+        ...[
+          "capacidad normal", "capacidad programable", "capacidad total",
+          "carga asignada", "disponible", "utilización",
+        ].flatMap(metric => [
+          `Total de ${metric}`,
+          `Promedio de ${metric}`,
+          `Máximo de ${metric}`,
+          `Mínimo de ${metric}`,
+          `${metric} por fecha`,
+          `Gráfica de ${metric} por fecha`,
+        ]),
         "¿Qué día tuvo mayor carga asignada?",
-        "Gráfica de capacidad total por fecha",
+        "¿Qué día tuvo menor carga asignada?",
+        "¿Qué día tuvo mayor utilización?",
+        "¿Qué día tuvo más capacidad disponible?",
+        "Distribución del diagnóstico de capacidad",
+        "Gráfica del diagnóstico por fecha",
       ],
     },
     {
-      topic: "Cumplimiento y conflictos",
-      required: ["cumplimiento"],
-      examples: [
-        "¿Cuántas órdenes tuvieron retraso?",
-        "Distribución de cumplimiento",
+      title: "Planificación y recursos",
+      description: "Distribuciones por técnico, asesor, bahía, fecha y semana.",
+      questions: [
+        "Órdenes por técnico",
+        "Gráfica de órdenes por técnico",
+        "Órdenes por asesor",
+        "Gráfica de órdenes por asesor",
+        "Órdenes por bahía",
+        "Gráfica de órdenes por bahía",
+        "Órdenes por fecha",
+        "Gráfica de órdenes por fecha",
+        "Órdenes por semana",
+        "Gráfica de órdenes por semana",
+        ...bays.flatMap(bay => [
+          `¿Cuántas órdenes hay en la bahía ${bay}?`,
+          `Lista las órdenes de la bahía ${bay}`,
+          `Órdenes de la bahía ${bay} por estado`,
+        ]),
+        ...advisors.flatMap(advisor => [
+          `Órdenes del asesor ${advisor} por estado`,
+          `Órdenes del asesor ${advisor} por tipo de vehículo`,
+        ]),
+      ],
+    },
+    {
+      title: "Cumplimiento y conflictos",
+      description: "Retrasos, terminación, horas extra, conflictos y validez de la planificación.",
+      questions: [
         "¿Cuántas órdenes tienen horas extra?",
+        "¿Cuántas OT requieren sobretiempo?",
+        "¿Cuántos conflictos de técnico existen?",
+        "¿Cuántos solapamientos de técnicos hay?",
+        "¿Cuántas órdenes están paradas?",
+        "¿Cuántas entregas incumplidas hay?",
+        "¿Cuántas órdenes válidas existen?",
+        "Distribución de cumplimiento",
+        "Gráfica de cumplimiento",
+        "Cumplimiento por técnico",
+        "Cumplimiento por tipo de vehículo",
+        "Situación de las órdenes",
+        "Gráfica de órdenes por situación",
+        ...compliance.flatMap(value => [
+          `¿Cuántas órdenes están ${value}?`,
+          `Lista las órdenes con cumplimiento ${value}`,
+          `Órdenes ${value} por técnico`,
+        ]),
+        ...situations.flatMap(value => [
+          `¿Cuántas órdenes tienen situación ${value}?`,
+          `Lista las órdenes ${value}`,
+          `Órdenes ${value} por estado`,
+        ]),
       ],
     },
     {
-      topic: "Definiciones y parámetros",
-      required: ["campo"],
-      examples: [
-        "¿Qué significa costo técnico?",
-        "¿Cómo se calcula la ganancia estimada?",
-        "Muestra los parámetros del taller",
-      ],
+      title: "Definiciones de los Excel",
+      description: "Significado y forma de cálculo de los campos documentados.",
+      questions: fields.flatMap(field => [
+        `¿Qué significa ${field}?`,
+        `Define ${field}`,
+        `¿Cómo se calcula ${field}?`,
+      ]),
     },
   ];
-  return groups
-    .filter(group => group.required.some(required =>
-      [...columns].some(column => column.includes(required))))
-    .map(group => ({
-      Tema: group.topic,
-      "Variantes admitidas": group.examples.join(" · "),
-    }));
+
+  return categories
+    .map(category => ({
+      ...category,
+      questions: uniqueQuestions(category.questions),
+    }))
+    .filter(category => category.questions.length);
+}
+
+function helpCatalog(sources: SourceTable[]): Row[] {
+  return buildQuestionCatalog(sources).map(category => ({
+    Tema: category.title,
+    Preguntas: category.questions.length,
+    Ejemplos: category.questions.slice(0, 3).join(" · "),
+  }));
 }
 
 function findGroupColumn(
@@ -617,6 +898,148 @@ function findGroupColumn(
     }))
     .sort((a, b) => b.score - a.score);
   return candidates[0]?.score > 10 ? candidates[0].column : undefined;
+}
+
+function periodForSource(source: SourceTable) {
+  const dateColumn = source.columns.find(column =>
+    ["fecha", "fecha programacion"].includes(clean(column)));
+  if (!dateColumn) return undefined;
+  const dates = source.rows
+    .map(row => String(row[dateColumn] ?? "").trim())
+    .map(value => {
+      const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (!match) return undefined;
+      return {
+        day: Number(match[1]),
+        month: Number(match[2]),
+        year: Number(match[3]),
+        timestamp: Date.UTC(Number(match[3]), Number(match[2]) - 1, Number(match[1])),
+      };
+    })
+    .filter((value): value is {
+      day: number;
+      month: number;
+      year: number;
+      timestamp: number;
+    } => Boolean(value));
+  if (!dates.length) return undefined;
+  dates.sort((a, b) => a.timestamp - b.timestamp);
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  const monthNames = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+  ];
+  const sameMonth = first.month === last.month && first.year === last.year;
+  return {
+    first,
+    last,
+    text: sameMonth
+      ? `${first.day} al ${last.day} de ${monthNames[first.month - 1]} de ${first.year}`
+      : `${first.day}/${first.month}/${first.year} al ${last.day}/${last.month}/${last.year}`,
+    isFullMonth: sameMonth &&
+      first.day === 1 &&
+      last.day === new Date(Date.UTC(last.year, last.month, 0)).getUTCDate(),
+  };
+}
+
+function technicianHoursAnswer(
+  question: string,
+  sources: SourceTable[],
+  wantsComputedTotal: boolean,
+  wantsAverage: boolean,
+  wantsMax: boolean,
+  wantsMin: boolean,
+) {
+  const q = clean(question);
+  const expanded = expandQuestion(question);
+  const asksTechnicians = [
+    "tecnico", "tecnicos", "mecanico", "mecanicos", "cada tecnico",
+    "por tecnico", "personal tecnico",
+  ].some(term => q.includes(term));
+  const asksHours = [
+    "horas productivas", "horas requeridas", "horas normales", "horas extra",
+  ].some(key => expanded.includes(key));
+  const naturalTotal = [
+    "cada tecnico", "por tecnico", "los tecnicos", "tecnicos del taller",
+    "horas trabajadas", "horas laboradas", "horas al mes", "horas mensuales",
+  ].some(term => q.includes(term));
+  if (
+    !asksTechnicians ||
+    !asksHours ||
+    wantsAverage ||
+    wantsMax ||
+    wantsMin ||
+    (!wantsComputedTotal && !naturalTotal)
+  ) {
+    return undefined;
+  }
+
+  const metricKey = expanded.includes("horas extra")
+    ? "horas extra"
+    : expanded.includes("horas normales")
+      ? "horas normales"
+      : expanded.includes("horas requeridas")
+        ? "horas requeridas"
+        : "horas productivas";
+  const preferred = sources.find(source => {
+    const hasTechnician = source.columns.some(column => clean(column) === "tecnico");
+    const hasMetric = source.columns.some(column => clean(column) === metricKey);
+    if (!hasTechnician || !hasMetric) return false;
+    if (metricKey === "horas productivas" || metricKey === "horas extra") {
+      return source.workbook.includes("Entregable 3") && clean(source.sheet) === "base_datos";
+    }
+    return source.workbook.includes("Entregable 2") && clean(source.sheet) === "planning_diario";
+  }) ?? sources.find(source =>
+    source.columns.some(column => clean(column) === "tecnico") &&
+    source.columns.some(column => clean(column) === metricKey));
+  if (!preferred) return undefined;
+
+  const technicianColumn = preferred.columns.find(column => clean(column) === "tecnico")!;
+  const metricColumn = preferred.columns.find(column => clean(column) === metricKey)!;
+  const appliedFilters = filtersFor(question, preferred)
+    .filter(filter => clean(filter.column) !== clean(metricColumn));
+  const rows = applyFilters(preferred.rows, appliedFilters);
+  const totals = new Map<string, number>();
+  rows.forEach(row => {
+    const technician = String(row[technicianColumn] ?? "").trim();
+    const value = num(row[metricColumn]);
+    if (technician && Number.isFinite(value)) {
+      totals.set(technician, (totals.get(technician) ?? 0) + value);
+    }
+  });
+  const personal = sources.find(source => clean(source.sheet) === "personal");
+  const nameColumn = personal?.columns.find(column => clean(column) === "nombre");
+  const preferredOrder = nameColumn
+    ? personal!.rows.map(row => String(row[nameColumn] ?? "").trim())
+    : [];
+  const data = [...totals]
+    .map(([label, value]) => ({ label, value: Number(value.toFixed(2)) }))
+    .sort((a, b) => {
+      const aIndex = preferredOrder.indexOf(a.label);
+      const bIndex = preferredOrder.indexOf(b.label);
+      return (aIndex < 0 ? 999 : aIndex) - (bIndex < 0 ? 999 : bIndex);
+    });
+  if (!data.length) return undefined;
+
+  const period = periodForSource(preferred);
+  const asksMonth = ["mes", "mensual", "mensuales", "julio"].some(term => q.includes(term));
+  const periodText = period
+    ? asksMonth && !period.isFullMonth
+      ? `Los archivos no cubren el mes completo; contienen información del ${period.text}. Para ese período`
+      : `Para el período del ${period.text}`
+    : "Para el período disponible";
+  return {
+    role: "assistant" as const,
+    text: `${periodText}, las ${metricColumn.toLowerCase()} acumuladas por técnico son: ${data.map(item => `${item.label}: ${fmt(item.value)} h`).join("; ")}.`,
+    table: data.map(item => ({
+      Técnico: item.label,
+      [metricColumn]: item.value,
+    })),
+    chart: data,
+    chartTitle: `${metricColumn} por técnico`,
+    sources: [sourceLabel(preferred)],
+  };
 }
 
 function personnelAnswer(question: string, sources: SourceTable[], wantsCount: boolean, wantsList: boolean) {
@@ -1142,11 +1565,26 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
   const wantsGroup = operationRequested(` ${q} `, "group");
   const wantsChart = operationRequested(q, "chart");
   const asksOrders = /\bot\b/.test(q) || q.includes("orden");
+  const numericConceptKeys = [
+    "horas productivas", "horas requeridas", "horas normales", "horas extra",
+    "tempario", "costo tecnico", "costo asesor", "costo lavado",
+    "costo control calidad", "costo total", "precio estimado", "ganancia estimada",
+    "capacidad", "utilizacion",
+  ];
+  const hasNumericConcept = numericConceptKeys.some(key => expanded.includes(key));
+  const wantsNumericQuantity = wantsCount && hasNumericConcept;
+  const wantsEntityCount = wantsCount && !wantsNumericQuantity;
+  const wantsComputedTotal = wantsTotal || wantsNumericQuantity;
 
   if (wantsHelp(q)) {
+    const catalog = buildQuestionCatalog(sources);
+    const questionCount = catalog.reduce(
+      (total, category) => total + category.questions.length,
+      0,
+    );
     return {
       role: "assistant",
-      text: "Puedes preguntar con lenguaje natural. Reconozco singular, plural, sinónimos, abreviaturas como OT y órdenes como contar, listar, filtrar, sumar, promediar, comparar o graficar.",
+      text: `Preparé ${questionCount} preguntas y variantes basadas en los valores reales de los cuatro Excel. Puedes preguntar con lenguaje natural: reconozco singular, plural, sinónimos, abreviaturas como OT y órdenes como contar, listar, filtrar, sumar, promediar, comparar o graficar.`,
       table: helpCatalog(sources),
       sources: [...new Set(sources.map(source => source.workbook))],
     };
@@ -1172,25 +1610,35 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
   const definition = definitionAnswer(question, sources);
   if (definition) return definition;
 
+  const technicianHours = technicianHoursAnswer(
+    question,
+    sources,
+    wantsComputedTotal,
+    wantsAverage,
+    wantsMax,
+    wantsMin,
+  );
+  if (technicianHours) return technicianHours;
+
   const conflictIndicator = conflictIndicatorAnswer(question, sources, wantsCount);
   if (conflictIndicator) return conflictIndicator;
 
-  const personnel = personnelAnswer(question, sources, wantsCount, wantsList);
+  const personnel = personnelAnswer(question, sources, wantsEntityCount, wantsList);
   if (personnel) return personnel;
 
-  const vehicleTypeCount = vehicleTypeCountAnswer(question, sources, wantsCount);
+  const vehicleTypeCount = vehicleTypeCountAnswer(question, sources, wantsEntityCount);
   if (vehicleTypeCount && !wantsGroup) return vehicleTypeCount;
 
   const vehicleTypeList = vehicleTypeListAnswer(question, sources, wantsList);
   if (vehicleTypeList) return vehicleTypeList;
 
-  const workTypeCount = workTypeCountAnswer(question, sources, wantsCount);
+  const workTypeCount = workTypeCountAnswer(question, sources, wantsEntityCount);
   if (workTypeCount && !wantsGroup) return workTypeCount;
 
   const workTypeList = workTypeListAnswer(question, sources, wantsList);
   if (workTypeList) return workTypeList;
 
-  const directCount = operationalCount(question, sources, wantsCount);
+  const directCount = operationalCount(question, sources, wantsEntityCount);
   if (directCount && !wantsGroup) return directCount;
 
   const ranked = sources
@@ -1198,15 +1646,8 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
     .sort((a, b) => b.score - a.score);
   const relevant = ranked.filter(item => item.score > 3).map(item => item.source);
   const pool = relevant.length ? relevant : sources;
-  const numericConceptKeys = [
-    "horas productivas", "horas requeridas", "horas normales", "horas extra",
-    "tempario", "costo tecnico", "costo asesor", "costo lavado",
-    "costo control calidad", "costo total", "precio estimado", "ganancia estimada",
-    "capacidad", "utilizacion",
-  ];
-  const hasNumericConcept = numericConceptKeys.some(key => expanded.includes(key));
   const needsNumericTarget =
-    wantsAverage || wantsTotal ||
+    wantsAverage || wantsComputedTotal ||
     ((wantsMax || wantsMin) && (hasNumericConcept || !asksOrders)) ||
     (wantsChart && hasNumericConcept);
   const numericTarget = needsNumericTarget ? bestColumn(expanded, pool, true) : undefined;
@@ -1220,7 +1661,7 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
   }
 
   let targetSource = numericTarget?.source ?? anyTarget?.source ?? relevant[0];
-  if (wantsCount || wantsList || wantsChart) {
+  if (wantsEntityCount || wantsList || wantsChart) {
     const detailed = relevant
       .filter(source => ["personal", "base_datos", "ordenes_trabajo", "planning_diario", "planning_ia", "capacidad_taller", "conflictos", "parametros", "temparios", "vehiculos"].includes(clean(source.sheet)))
       .sort((a, b) => sourceScore(expanded, b) - sourceScore(expanded, a));
@@ -1242,7 +1683,7 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
   const source = [sourceLabel(targetSource)];
 
   const defaultGroupedCount = group && (
-    wantsCount ||
+    wantsEntityCount ||
     (wantsGroup && !target) ||
     (wantsChart && (!target || asksOrders)) ||
     ((wantsMax || wantsMin) && asksOrders)
@@ -1369,7 +1810,7 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
     };
   }
 
-  if (wantsCount) {
+  if (wantsEntityCount) {
     const idColumn = targetSource.columns.find(column => clean(column) === "ot");
     const count = idColumn
       ? new Set(filteredRows.map(row => String(row[idColumn] ?? "")).filter(Boolean)).size
@@ -1384,7 +1825,7 @@ export function answerAcross(question: string, sources: SourceTable[]): Chat {
 
   const operation: "average" | "total" | "max" | "min" | undefined =
     wantsAverage ? "average"
-      : wantsTotal ? "total"
+      : wantsComputedTotal ? "total"
         : wantsMin ? "min"
           : wantsMax ? "max"
             : wantsChart && target ? "total"
@@ -1590,11 +2031,11 @@ export const suggestedQuestions = [
   "¿Cuántas órdenes de trabajo hay?",
   "¿Cuántos técnicos tiene el taller?",
   "¿Cuántas camionetas están registradas?",
-  "¿Cuántos lavadores hay?",
+  "¿Cuántas horas trabajó al mes cada técnico?",
   "Gráfica de órdenes por estado",
-  "Promedio de horas productivas por técnico",
+  "¿Qué técnico trabajó más horas?",
   "Total de costo por tipo de vehículo",
-  "¿Qué técnico tiene más horas productivas?",
+  "¿Cuántos lavadores hay?",
   "¿Qué significa costo técnico?",
   "¿Qué puedo preguntar?",
 ];
