@@ -31,3 +31,5 @@ Edita `.env.local` y coloca allí la clave. Este archivo está excluido de Git.
 - Los cuatro Excel se consultan automáticamente.
 - Si las fuentes presentan cantidades diferentes, se informa la discrepancia.
 - La clave de OpenAI solo existe en el servidor.
+- `next.config.mjs` obliga a Vercel a incluir los cuatro Excel dentro de la
+  función `/api/ask`.
