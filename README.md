@@ -1,35 +1,34 @@
-# Asistente Excel IA — ESPE Latacunga
+# Asistente Excel — ESPE Latacunga
 
-Aplicación web para Vercel que utiliza un modelo de OpenAI para interpretar preguntas en español y un motor determinista para calcular respuestas sobre cuatro archivos Excel.
+Versión estable para Vercel sin OpenAI ni servicios de pago. Conserva el diseño,
+el título institucional y la carga conjunta de los cuatro Excel. El motor local
+interpreta preguntas con distintas palabras, singular/plural, filtros, conteos,
+listas, sumas, promedios, máximos, mínimos, comparaciones y agrupaciones.
 
 ## Publicación en Vercel
 
 1. Descomprime este proyecto.
 2. Sube la carpeta a un repositorio de GitHub.
 3. En Vercel selecciona **Add New → Project** e importa el repositorio.
-4. En **Environment Variables** agrega:
-   - `OPENAI_API_KEY`: tu clave completa de OpenAI (marcada como secreta).
-   - `OPENAI_MODEL`: `gpt-5.6-sol`.
-5. Pulsa **Deploy**.
-
-No coloques la clave en archivos, en GitHub ni en el código.
+4. Pulsa **Deploy**. No se requieren variables de entorno.
 
 ## Ejecución local opcional
 
 ```bash
 npm install
-cp .env.example .env.local
 npm run dev
 ```
 
-Edita `.env.local` y coloca allí la clave. Este archivo está excluido de Git.
-
 ## Cómo funciona
 
-- El modelo interpreta la intención, columnas, filtros y operación solicitada.
-- El servidor ejecuta conteos, promedios, sumas, listas y agrupaciones.
-- Los cuatro Excel se consultan automáticamente.
-- Si las fuentes presentan cantidades diferentes, se informa la discrepancia.
-- La clave de OpenAI solo existe en el servidor.
-- `data/catalog.json` contiene los datos de las 17 hojas ya preparados para
-  Vercel. La función no intenta abrir archivos Excel desde `/var/task`.
+- Los cuatro Excel se cargan desde `public/data` directamente en la página.
+- No utiliza OpenAI, claves, saldo ni variables de entorno.
+- Consulta automáticamente todas las fuentes relevantes, sin pedir al usuario
+  que seleccione un libro.
+- Incluye reglas corregidas para técnicos, asesores, lavado, control de calidad,
+  OT, vehículos, estados, costos, horas, capacidad, cumplimiento y agrupaciones.
+- Detecta diferencias entre archivos y las muestra en vez de elegir un valor al
+  azar.
+- Cada respuesta con datos numéricos ofrece gráficas de barras, línea y circular.
+- La pregunta **¿Qué puedo preguntar?** muestra un catálogo de ejemplos basado
+  en los campos disponibles.

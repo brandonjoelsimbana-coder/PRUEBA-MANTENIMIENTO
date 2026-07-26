@@ -105,6 +105,29 @@ export function executePlan(plan: QueryPlan, tables: DataTable[]): QueryResult {
     return { answer: `Agrupé ${rows.length} registros por ${group.column}.`, interpretation: plan.interpretation, sources, table };
   }
 
+  if (["sum", "average", "min", "max"].includes(plan.operation) && target?.score > 0 && group?.score > 0) {
+    const buckets = new Map<string, number[]>();
+    rows.forEach(row => {
+      const key = String(row[group.column] ?? "Sin dato") || "Sin dato";
+      const value = Number(String(row[target.column] ?? "").replace(",", "."));
+      if (Number.isFinite(value)) buckets.set(key, [...(buckets.get(key) ?? []), value]);
+    });
+    const names = { sum: "Total", average: "Promedio", min: "Mínimo", max: "Máximo" } as const;
+    const resultColumn = `${names[plan.operation as keyof typeof names]} de ${target.column}`;
+    const table = [...buckets].map(([key, values]) => {
+      const result = plan.operation === "sum" ? values.reduce((a, b) => a + b, 0)
+        : plan.operation === "average" ? values.reduce((a, b) => a + b, 0) / values.length
+        : plan.operation === "min" ? Math.min(...values) : Math.max(...values);
+      return { [group.column]: key, [resultColumn]: Number(result.toFixed(2)) };
+    }).sort((a, b) => Number(b[resultColumn]) - Number(a[resultColumn]));
+    return {
+      answer: `Calculé ${names[plan.operation as keyof typeof names].toLowerCase()} de ${target.column} por ${group.column}.`,
+      interpretation: plan.interpretation,
+      sources,
+      table
+    };
+  }
+
   if (["sum", "average", "min", "max"].includes(plan.operation) && target?.score > 0) {
     const values = rows.map(row => Number(String(row[target.column] ?? "").replace(",", "."))).filter(Number.isFinite);
     if (!values.length) return { answer: `La columna ${target.column} no contiene valores numéricos válidos.`, interpretation: plan.interpretation, sources };
